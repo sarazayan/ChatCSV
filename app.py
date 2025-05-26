@@ -9,16 +9,23 @@ from openai import OpenAI
 # Page configuration
 st.set_page_config(page_title="Student Data Chat", layout="wide")
 
-# Initialize OpenAI API
+# Initialize OpenAI API - Fixed version without proxies
 def get_openai_api():
     api_key = os.environ.get("OPENAI_API_KEY", "")
     if not api_key:
         api_key = st.sidebar.text_input("Enter OpenAI API Key:", type="password")
     return api_key
 
-# Load data function
+# Load data function with upload capability
 @st.cache_data
-def load_data():
+def load_csv_data(uploaded_file=None):
+    if uploaded_file is not None:
+        try:
+            return pd.read_csv(uploaded_file)
+        except Exception as e:
+            st.error(f"Error reading uploaded file: {e}")
+            return None
+    
     try:
         # Check various possible locations
         if os.path.exists("student_habits_performance.csv"):
@@ -28,25 +35,7 @@ def load_data():
         elif os.path.exists("data/student_habits_performance.csv"):
             return pd.read_csv("data/student_habits_performance.csv")
         else:
-            # Create sample data if file not found
-            return pd.DataFrame({
-                'student_id': ['S001', 'S002', 'S003'],
-                'age': [18, 19, 20],
-                'gender': ['Male', 'Female', 'Male'],
-                'study_hours_per_day': [2.5, 3.0, 1.5],
-                'social_media_hours': [3.0, 2.0, 4.0],
-                'netflix_hours': [2.0, 1.0, 3.0],
-                'part_time_job': ['Yes', 'No', 'Yes'],
-                'attendance_percentage': [85.0, 92.0, 78.0],
-                'sleep_hours': [7.0, 8.0, 6.0],
-                'diet_quality': ['Good', 'Excellent', 'Poor'],
-                'exercise_frequency': [3, 5, 1],
-                'parental_education_level': ['College', 'Graduate', 'High School'],
-                'internet_quality': ['Good', 'Excellent', 'Fair'],
-                'mental_health_rating': [8, 9, 6],
-                'extracurricular_participation': ['Yes', 'Yes', 'No'],
-                'exam_score': [78.5, 92.0, 65.0]
-            })
+            return None
     except Exception as e:
         st.error(f"Error loading data: {e}")
         return None
@@ -92,12 +81,13 @@ def get_data_context(df, query):
     
     return context
 
-# Function to chat with the LLM
+# Function to chat with the LLM - FIXED version without proxies
 def chat_with_data(api_key, df, query):
     if not api_key:
         return "Please provide an OpenAI API key to enable chat."
     
     try:
+        # Fixed client initialization - no proxies
         client = OpenAI(api_key=api_key)
         
         # Get relevant data context
@@ -186,16 +176,57 @@ def main():
     # Get OpenAI API key
     api_key = get_openai_api()
     
-    # Load data
-    df = load_data()
-    if df is None:
-        st.error("Please upload a CSV file with student data.")
-        uploaded_file = st.file_uploader("Upload CSV file", type="csv")
-        if uploaded_file:
-            df = pd.read_csv(uploaded_file)
+    # File uploader for CSV
+    st.sidebar.title("Data")
+    uploaded_file = st.sidebar.file_uploader("Upload your student data CSV", type="csv")
     
-    # Display data preview
-    if df is not None:
+    # Load data - either from upload or default
+    df = load_csv_data(uploaded_file)
+    
+    if df is None:
+        st.warning("No data loaded. Please upload a CSV file with student data.")
+        
+        # Show expected format
+        st.info("""
+        The CSV should have columns like:
+        - student_id, age, gender, study_hours_per_day
+        - social_media_hours, netflix_hours, part_time_job
+        - attendance_percentage, sleep_hours, diet_quality
+        - exercise_frequency, parental_education_level
+        - internet_quality, mental_health_rating
+        - extracurricular_participation, exam_score
+        """)
+        
+        # Create sample data to download
+        if st.button("Download Sample CSV"):
+            sample_data = pd.DataFrame({
+                'student_id': ['S001', 'S002', 'S003'],
+                'age': [18, 19, 20],
+                'gender': ['Male', 'Female', 'Male'],
+                'study_hours_per_day': [2.5, 3.0, 1.5],
+                'social_media_hours': [3.0, 2.0, 4.0],
+                'netflix_hours': [2.0, 1.0, 3.0],
+                'part_time_job': ['Yes', 'No', 'Yes'],
+                'attendance_percentage': [85.0, 92.0, 78.0],
+                'sleep_hours': [7.0, 8.0, 6.0],
+                'diet_quality': ['Good', 'Excellent', 'Poor'],
+                'exercise_frequency': [3, 5, 1],
+                'parental_education_level': ['College', 'Graduate', 'High School'],
+                'internet_quality': ['Good', 'Excellent', 'Fair'],
+                'mental_health_rating': [8, 9, 6],
+                'extracurricular_participation': ['Yes', 'Yes', 'No'],
+                'exam_score': [78.5, 92.0, 65.0]
+            })
+            
+            csv = sample_data.to_csv(index=False)
+            st.download_button(
+                label="Download sample data",
+                data=csv,
+                file_name="sample_student_data.csv",
+                mime="text/csv"
+            )
+    else:
+        # Display data preview
         with st.expander("Preview Data"):
             st.dataframe(df.head())
             
@@ -273,8 +304,6 @@ def main():
                     "content": response_text,
                     "results": results
                 })
-    else:
-        st.info("No data loaded. Please upload a CSV file.")
 
 if __name__ == "__main__":
     main()
