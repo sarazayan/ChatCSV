@@ -4,12 +4,75 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 import os
-from openai import OpenAI
+import sys
+import re
+from io import StringIO
+
+# Try different OpenAI import approaches to handle different versions
+try:
+    from openai import OpenAI
+    HAS_NEW_OPENAI = True
+except ImportError:
+    import openai
+    HAS_NEW_OPENAI = False
 
 # Page configuration
 st.set_page_config(page_title="Student Data Chat", layout="wide")
 
-# Initialize OpenAI API - Fixed version without proxies
+# Initialize OpenAI API - ROBUST VERSION that handles different client versions
+def get_openai_client(api_key):
+    if not api_key:
+        return None
+    
+    # Try multiple initialization methods to handle different OpenAI versions
+    try:
+        if HAS_NEW_OPENAI:
+            # New OpenAI client (v1.0.0+)
+            client = OpenAI(api_key=api_key)
+            # Test the client with a simple completion to verify it works
+            client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[{"role": "user", "content": "Hello"}],
+                max_tokens=5
+            )
+            return client
+        else:
+            # Legacy OpenAI client
+            openai.api_key = api_key
+            # Test with a simple completion
+            openai.ChatCompletion.create(
+                model="gpt-3.5-turbo",
+                messages=[{"role": "user", "content": "Hello"}],
+                max_tokens=5
+            )
+            return openai
+    except Exception as e:
+        # If the standard approach fails, try without proxies parameter
+        try:
+            if HAS_NEW_OPENAI:
+                # Try creating client by directly modifying __init__ parameters
+                from inspect import signature
+                sig = signature(OpenAI.__init__)
+                if 'api_key' in sig.parameters:
+                    # Only pass parameters that are accepted
+                    kwargs = {'api_key': api_key}
+                    client = OpenAI(**kwargs)
+                    # Test the client
+                    client.chat.completions.create(
+                        model="gpt-3.5-turbo",
+                        messages=[{"role": "user", "content": "Hello"}],
+                        max_tokens=5
+                    )
+                    return client
+            else:
+                # For legacy client, just set the api key
+                openai.api_key = api_key
+                return openai
+        except Exception as nested_e:
+            st.error(f"Could not initialize OpenAI client: {str(nested_e)}")
+            return None
+
+# Get OpenAI API key
 def get_openai_api():
     api_key = os.environ.get("OPENAI_API_KEY", "")
     if not api_key:
@@ -81,15 +144,12 @@ def get_data_context(df, query):
     
     return context
 
-# Function to chat with the LLM - FIXED version without proxies
-def chat_with_data(api_key, df, query):
-    if not api_key:
-        return "Please provide an OpenAI API key to enable chat."
+# Function to chat with the LLM - WORKS WITH BOTH OPENAI VERSIONS
+def chat_with_data(client, df, query):
+    if not client:
+        return "Please provide a valid OpenAI API key to enable chat."
     
     try:
-        # Fixed client initialization - no proxies
-        client = OpenAI(api_key=api_key)
-        
         # Get relevant data context
         data_context = get_data_context(df, query)
         
@@ -107,17 +167,29 @@ def chat_with_data(api_key, df, query):
         4. For visualizations, include matplotlib or seaborn code
         """
         
-        # Send request to OpenAI
-        response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": system_message},
-                {"role": "user", "content": query}
-            ],
-            temperature=0.2
-        )
-        
-        return response.choices[0].message.content
+        # Send request to OpenAI - handle both new and legacy client
+        if HAS_NEW_OPENAI:
+            # New OpenAI client (v1.0.0+)
+            response = client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": system_message},
+                    {"role": "user", "content": query}
+                ],
+                temperature=0.2
+            )
+            return response.choices[0].message.content
+        else:
+            # Legacy OpenAI client
+            response = client.ChatCompletion.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": system_message},
+                    {"role": "user", "content": query}
+                ],
+                temperature=0.2
+            )
+            return response.choices[0].message['content']
     
     except Exception as e:
         return f"Error: {str(e)}"
@@ -175,6 +247,9 @@ def main():
     
     # Get OpenAI API key
     api_key = get_openai_api()
+    
+    # Initialize OpenAI client
+    openai_client = get_openai_client(api_key) if api_key else None
     
     # File uploader for CSV
     st.sidebar.title("Data")
@@ -284,26 +359,45 @@ def main():
                 response_placeholder = st.empty()
                 response_placeholder.text("Analyzing data...")
                 
-                # Get response
-                response_text = chat_with_data(api_key, df, prompt)
-                response_placeholder.markdown(response_text)
-                
-                # Extract and execute code if present
-                results = execute_code(df, response_text)
-                
-                # Display results
-                for result_type, result in results:
-                    if result_type == "figure":
-                        st.pyplot(result)
-                    elif result_type == "error":
-                        st.error(result)
-                
-                # Add assistant response to chat history
-                st.session_state.messages.append({
-                    "role": "assistant", 
-                    "content": response_text,
-                    "results": results
-                })
+                if not openai_client:
+                    response_placeholder.error("OpenAI client initialization failed. Please check your API key.")
+                    # Add error response to chat history
+                    st.session_state.messages.append({
+                        "role": "assistant", 
+                        "content": "Error: OpenAI client initialization failed. Please check your API key.",
+                        "results": []
+                    })
+                else:
+                    try:
+                        # Get response
+                        response_text = chat_with_data(openai_client, df, prompt)
+                        response_placeholder.markdown(response_text)
+                        
+                        # Extract and execute code if present
+                        results = execute_code(df, response_text)
+                        
+                        # Display results
+                        for result_type, result in results:
+                            if result_type == "figure":
+                                st.pyplot(result)
+                            elif result_type == "error":
+                                st.error(result)
+                        
+                        # Add assistant response to chat history
+                        st.session_state.messages.append({
+                            "role": "assistant", 
+                            "content": response_text,
+                            "results": results
+                        })
+                    except Exception as e:
+                        error_msg = f"Error: {str(e)}"
+                        response_placeholder.error(error_msg)
+                        # Add error response to chat history
+                        st.session_state.messages.append({
+                            "role": "assistant", 
+                            "content": error_msg,
+                            "results": []
+                        })
 
 if __name__ == "__main__":
     main()
