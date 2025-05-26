@@ -1,8 +1,6 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 import os
-import toml
 
 # LangChain imports - minimal set
 from langchain.chat_models import ChatOpenAI
@@ -10,42 +8,9 @@ from langchain.agents import create_pandas_dataframe_agent
 from langchain.agents import AgentType
 
 # Set page configuration
-st.set_page_config(
-    page_title="CSV Analyzer", 
-    page_icon="📊",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+st.set_page_config(page_title="CSV Analyzer", layout="wide")
 
-# Apply custom CSS
-st.markdown("""
-<style>
-    .reportview-container {
-        margin-top: -2em;
-    }
-    .stButton button {
-        width: 100%;
-    }
-    .st-bd {
-        padding-top: 3rem;
-    }
-    .css-18e3th9 {
-        padding-top: 1rem;
-        padding-bottom: 10rem;
-        padding-left: 5rem;
-        padding-right: 5rem;
-    }
-    .css-1d391kg {
-        padding-top: 3.5rem;
-        padding-right: 1rem;
-        padding-bottom: 3.5rem;
-        padding-left: 1rem;
-    }
-    footer {visibility: hidden;}
-</style>
-""", unsafe_allow_html=True)
-
-# Function to get OpenAI API key with better error handling
+# Function to get OpenAI API key
 def get_openai_api_key():
     """Get OpenAI API key from Streamlit secrets or user input"""
     # Try to get from streamlit secrets (for deployment)
@@ -53,7 +18,7 @@ def get_openai_api_key():
         if 'OPENAI_API_KEY' in st.secrets:
             st.sidebar.success("API key loaded from secrets!")
             return st.secrets['OPENAI_API_KEY']
-    except Exception as e:
+    except Exception:
         st.sidebar.info("No API key found in secrets.")
     
     # Try environment variable next
@@ -69,7 +34,7 @@ def get_openai_api_key():
     
     return api_key
 
-# Function to set up the agent with better error handling
+# Function to set up the agent
 def setup_agent(df, api_key):
     """Set up a pandas agent to analyze the dataframe"""
     try:
@@ -77,20 +42,12 @@ def setup_agent(df, api_key):
             st.error("No API key provided. Please enter your OpenAI API key.")
             return None
             
-        # Verify the API key looks valid (simple check)
-        if not api_key.startswith(("sk-", "org-")):
-            st.warning("API key format doesn't look right. It should start with 'sk-'.")
-            
-        # Create the language model with explicit error handling
-        try:
-            llm = ChatOpenAI(
-                temperature=0.2,
-                model="gpt-3.5-turbo",
-                openai_api_key=api_key
-            )
-        except Exception as e:
-            st.error(f"Error initializing OpenAI model: {str(e)}")
-            return None
+        # Create the language model
+        llm = ChatOpenAI(
+            temperature=0.2,
+            model="gpt-3.5-turbo",
+            openai_api_key=api_key
+        )
         
         # Define the agent prompt
         agent_prompt = """You are a data analyst working with a pandas DataFrame.
@@ -117,29 +74,19 @@ def setup_agent(df, api_key):
         DO NOT invent data or features that don't exist in the dataframe.
         """
         
-        # Create the pandas agent with error handling
-        try:
-            agent = create_pandas_dataframe_agent(
-                llm,
-                df,
-                verbose=True,
-                agent_type=AgentType.OPENAI_FUNCTIONS,
-                prefix=agent_prompt
-            )
-            return agent
-        except ImportError as e:
-            if "tabulate" in str(e):
-                st.error("Missing dependency 'tabulate'. This is needed for formatting DataFrames.")
-                st.code("pip install tabulate==0.9.0", language="bash")
-            else:
-                st.error(f"Import error: {str(e)}")
-            return None
-        except Exception as e:
-            st.error(f"Error creating agent: {str(e)}")
-            return None
+        # Create the pandas agent
+        agent = create_pandas_dataframe_agent(
+            llm,
+            df,
+            verbose=True,
+            agent_type=AgentType.OPENAI_FUNCTIONS,
+            prefix=agent_prompt
+        )
+        
+        return agent
     
     except Exception as e:
-        st.error(f"Unexpected error setting up agent: {str(e)}")
+        st.error(f"Error setting up agent: {str(e)}")
         return None
 
 # Function to handle file upload
@@ -167,67 +114,12 @@ def main():
     
     # Sidebar
     st.sidebar.title("CSV Analyzer")
-    st.sidebar.markdown("---")
-    
-    # Display version info for debugging
-    with st.sidebar.expander("Debug Info"):
-        st.write(f"Streamlit: {st.__version__}")
-        st.write(f"Pandas: {pd.__version__}")
-        st.write(f"NumPy: {np.__version__}")
-        
-        # Check if tabulate is installed
-        try:
-            import tabulate
-            st.write(f"Tabulate: {tabulate.__version__}")
-        except ImportError:
-            st.error("Tabulate not installed!")
     
     # Get OpenAI API key
     api_key = get_openai_api_key()
     
     # File uploader section
-    st.sidebar.header("Upload Data")
     uploaded_file = st.sidebar.file_uploader("Choose a CSV file", type="csv")
-    
-    # Sample data section
-    with st.sidebar.expander("Don't have a CSV?"):
-        if st.button("Generate Sample Data"):
-            import numpy as np
-            # Create sample data
-            sample_data = pd.DataFrame({
-                'ID': range(1, 101),
-                'Age': np.random.randint(18, 70, 100),
-                'Gender': np.random.choice(['Male', 'Female', 'Non-binary'], 100),
-                'Income': np.random.normal(50000, 15000, 100).round(2),
-                'Education': np.random.choice(['High School', 'Bachelor', 'Master', 'PhD'], 100),
-                'Years_Experience': np.random.randint(0, 30, 100),
-                'Department': np.random.choice(['Sales', 'Marketing', 'HR', 'Engineering', 'Support'], 100),
-                'Performance_Score': np.random.normal(7, 1.5, 100).round(2)
-            })
-            
-            # Add correlated columns
-            sample_data['Salary'] = (
-                sample_data['Years_Experience'] * 2000 + 
-                sample_data['Performance_Score'] * 5000 + 
-                np.random.normal(30000, 5000, 100)
-            ).round(2)
-            
-            # Save as CSV
-            csv = sample_data.to_csv(index=False)
-            
-            # Provide download button
-            st.sidebar.download_button(
-                label="Download Sample CSV",
-                data=csv,
-                file_name="sample_employee_data.csv",
-                mime="text/csv"
-            )
-    
-    # Clear chat button
-    if st.session_state.messages:
-        if st.sidebar.button("Clear Chat History"):
-            st.session_state.messages = []
-            st.experimental_rerun()
     
     # Main area
     if uploaded_file is not None:
@@ -249,18 +141,14 @@ def main():
                 
                 # Column information
                 st.subheader("Column Information")
-                col1, col2, col3 = st.columns([2, 1, 1])
-                col1.metric("Rows", df.shape[0])
-                col2.metric("Columns", df.shape[1])
-                col3.metric("Memory Usage", f"{df.memory_usage(deep=True).sum() / 1024**2:.2f} MB")
+                st.write(f"Rows: {df.shape[0]}, Columns: {df.shape[1]}")
                 
                 # Display column types
                 col_info = pd.DataFrame({
                     "Column": df.columns,
                     "Type": df.dtypes.astype(str),
                     "Non-Null Values": df.count().values,
-                    "Null Values": df.isna().sum().values,
-                    "Unique Values": [df[col].nunique() for col in df.columns]
+                    "Null Values": df.isna().sum().values
                 })
                 st.dataframe(col_info, use_container_width=True)
             
@@ -282,7 +170,6 @@ def main():
                         - Find the correlation between [column1] and [column2]
                         - Group by [categorical column] and calculate average [numeric column]
                         - What rows have [column] greater than [value]?
-                        - Which department has the highest average salary?
                         """)
                     
                     # Display chat history
@@ -341,36 +228,6 @@ def main():
         
         Simply upload your file using the sidebar on the left.
         """)
-        
-        # Feature showcases with columns
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            st.markdown("### 📈 Basic Analysis")
-            st.markdown("""
-            - Dataset structure
-            - Column statistics
-            - Missing values
-            - Data types
-            """)
-            
-        with col2:
-            st.markdown("### 🔍 Advanced Analysis")
-            st.markdown("""
-            - Correlations
-            - Group by operations
-            - Filtering data
-            - Finding outliers
-            """)
-            
-        with col3:
-            st.markdown("### 💡 Natural Language")
-            st.markdown("""
-            - Ask in plain English
-            - No coding required
-            - Instant insights
-            - Export results
-            """)
 
 if __name__ == "__main__":
     main()
