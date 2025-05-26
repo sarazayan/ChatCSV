@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import os
+import toml
 
 # LangChain imports - minimal set
 from langchain.chat_models import ChatOpenAI
@@ -43,26 +45,52 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Function to get OpenAI API key
+# Function to get OpenAI API key with better error handling
 def get_openai_api_key():
-    """Get OpenAI API key from environment or user input"""
+    """Get OpenAI API key from Streamlit secrets or user input"""
+    # Try to get from streamlit secrets (for deployment)
+    try:
+        if 'OPENAI_API_KEY' in st.secrets:
+            st.sidebar.success("API key loaded from secrets!")
+            return st.secrets['OPENAI_API_KEY']
+    except Exception as e:
+        st.sidebar.info("No API key found in secrets.")
+    
+    # Try environment variable next
     api_key = os.environ.get("OPENAI_API_KEY", "")
-    if not api_key:
-        api_key = st.sidebar.text_input("Enter OpenAI API Key:", type="password")
-        if api_key:
-            st.sidebar.success("API Key provided!")
+    if api_key:
+        st.sidebar.success("API key loaded from environment!")
+        return api_key
+        
+    # Finally, ask user directly
+    api_key = st.sidebar.text_input("Enter OpenAI API Key:", type="password")
+    if api_key:
+        st.sidebar.success("API Key provided!")
+    
     return api_key
 
-# Function to set up the agent
+# Function to set up the agent with better error handling
 def setup_agent(df, api_key):
     """Set up a pandas agent to analyze the dataframe"""
     try:
-        # Create the language model
-        llm = ChatOpenAI(
-            temperature=0.2,
-            model="gpt-3.5-turbo",
-            openai_api_key=api_key
-        )
+        if not api_key:
+            st.error("No API key provided. Please enter your OpenAI API key.")
+            return None
+            
+        # Verify the API key looks valid (simple check)
+        if not api_key.startswith(("sk-", "org-")):
+            st.warning("API key format doesn't look right. It should start with 'sk-'.")
+            
+        # Create the language model with explicit error handling
+        try:
+            llm = ChatOpenAI(
+                temperature=0.2,
+                model="gpt-3.5-turbo",
+                openai_api_key=api_key
+            )
+        except Exception as e:
+            st.error(f"Error initializing OpenAI model: {str(e)}")
+            return None
         
         # Define the agent prompt
         agent_prompt = """You are a data analyst working with a pandas DataFrame.
@@ -89,19 +117,29 @@ def setup_agent(df, api_key):
         DO NOT invent data or features that don't exist in the dataframe.
         """
         
-        # Create the pandas agent
-        agent = create_pandas_dataframe_agent(
-            llm,
-            df,
-            verbose=True,
-            agent_type=AgentType.OPENAI_FUNCTIONS,
-            prefix=agent_prompt
-        )
-        
-        return agent
+        # Create the pandas agent with error handling
+        try:
+            agent = create_pandas_dataframe_agent(
+                llm,
+                df,
+                verbose=True,
+                agent_type=AgentType.OPENAI_FUNCTIONS,
+                prefix=agent_prompt
+            )
+            return agent
+        except ImportError as e:
+            if "tabulate" in str(e):
+                st.error("Missing dependency 'tabulate'. This is needed for formatting DataFrames.")
+                st.code("pip install tabulate==0.9.0", language="bash")
+            else:
+                st.error(f"Import error: {str(e)}")
+            return None
+        except Exception as e:
+            st.error(f"Error creating agent: {str(e)}")
+            return None
     
     except Exception as e:
-        st.error(f"Error setting up agent: {str(e)}")
+        st.error(f"Unexpected error setting up agent: {str(e)}")
         return None
 
 # Function to handle file upload
@@ -130,6 +168,19 @@ def main():
     # Sidebar
     st.sidebar.title("CSV Analyzer")
     st.sidebar.markdown("---")
+    
+    # Display version info for debugging
+    with st.sidebar.expander("Debug Info"):
+        st.write(f"Streamlit: {st.__version__}")
+        st.write(f"Pandas: {pd.__version__}")
+        st.write(f"NumPy: {np.__version__}")
+        
+        # Check if tabulate is installed
+        try:
+            import tabulate
+            st.write(f"Tabulate: {tabulate.__version__}")
+        except ImportError:
+            st.error("Tabulate not installed!")
     
     # Get OpenAI API key
     api_key = get_openai_api_key()
@@ -216,7 +267,8 @@ def main():
             # Chat interface
             if api_key:
                 # Set up agent
-                agent = setup_agent(df, api_key)
+                with st.spinner("Setting up analysis agent..."):
+                    agent = setup_agent(df, api_key)
                 
                 if agent:
                     # Example questions
